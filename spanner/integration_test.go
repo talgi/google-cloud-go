@@ -57,11 +57,12 @@ const (
 	directPathIPV6Prefix = "[2001:4860:8040"
 	directPathIPV4Prefix = "34.126"
 
-	singerDDLStatements    = "SINGER_DDL_STATEMENTS"
-	simpleDDLStatements    = "SIMPLE_DDL_STATEMENTS"
-	readDDLStatements      = "READ_DDL_STATEMENTS"
-	backupDDLStatements    = "BACKUP_DDL_STATEMENTS"
-	testTableDDLStatements = "TEST_TABLE_DDL_STATEMENTS"
+	singerDDLStatements               = "SINGER_DDL_STATEMENTS"
+	simpleDDLStatements               = "SIMPLE_DDL_STATEMENTS"
+	readDDLStatements                 = "READ_DDL_STATEMENTS"
+	backupDDLStatements               = "BACKUP_DDL_STATEMENTS"
+	testTableDDLStatements            = "TEST_TABLE_DDL_STATEMENTS"
+	testTableBitReversedSeqStatements = "TEST_TABLE_BIT_REVERSED_SEQUENCE_STATEMENTS"
 )
 
 var (
@@ -233,6 +234,18 @@ var (
 						NumericArray	ARRAY<NUMERIC>
 					) PRIMARY KEY (RowID)`,
 	}
+	bitRevrseSeqDBStatments = []string{
+		`CREATE SEQUENCE seqT OPTIONS (sequence_kind = "bit_reversed_positive")`,
+		`CREATE TABLE T (
+            id INT64 DEFAULT (GET_NEXT_SEQUENCE_VALUE('seqT')),
+            value INT64,
+            counter INT64 DEFAULT (GET_INTERNAL_SEQUENCE_STATE('seqT')),
+            br_id INT64 AS (BIT_REVERSE(id, true)) STORED,
+            CONSTRAINT id_gt_0 CHECK (id > 0),
+            CONSTRAINT counter_gt_br_id CHECK (counter >= br_id),
+            CONSTRAINT br_id_true CHECK (id = BIT_REVERSE(br_id, true)),
+          ) PRIMARY KEY (id)`,
+	}
 
 	backupDBPGStatements = []string{
 		`CREATE TABLE Singers (
@@ -259,20 +272,35 @@ var (
 					)`,
 	}
 
+	bitRevrseSeqDBPGStatments = []string{
+		`CREATE SEQUENCE Seq BIT_REVERSED_POSITIVE`,
+		//`CREATE TABLE T (
+		//    id BIGINT DEFAULT nextval('Seq') PRIMARY KEY,
+		//    value BIGINT,
+		//    counter BIGINT DEFAULT pg_sequence_last_value('Seq'),
+		//    br_id BIGINT AS (BIT_REVERSE(id, true)) STORED,
+		//    CONSTRAINT id_gt_0 CHECK (id > 0),
+		//    CONSTRAINT counter_gt_br_id CHECK (counter >= br_id),
+		//    CONSTRAINT br_id_true CHECK (id = BIT_REVERSE(br_id, true)),
+		//  )`,
+	}
+
 	statements = map[adminpb.DatabaseDialect]map[string][]string{
 		adminpb.DatabaseDialect_GOOGLE_STANDARD_SQL: {
-			singerDDLStatements:    singerDBStatements,
-			simpleDDLStatements:    simpleDBStatements,
-			readDDLStatements:      readDBStatements,
-			backupDDLStatements:    backupDBStatements,
-			testTableDDLStatements: readDBStatements,
+			singerDDLStatements:               singerDBStatements,
+			simpleDDLStatements:               simpleDBStatements,
+			readDDLStatements:                 readDBStatements,
+			backupDDLStatements:               backupDBStatements,
+			testTableDDLStatements:            readDBStatements,
+			testTableBitReversedSeqStatements: bitRevrseSeqDBStatments,
 		},
 		adminpb.DatabaseDialect_POSTGRESQL: {
-			singerDDLStatements:    singerDBPGStatements,
-			simpleDDLStatements:    simpleDBPGStatements,
-			readDDLStatements:      readDBPGStatements,
-			backupDDLStatements:    backupDBPGStatements,
-			testTableDDLStatements: readDBPGStatements,
+			singerDDLStatements:               singerDBPGStatements,
+			simpleDDLStatements:               simpleDBPGStatements,
+			readDDLStatements:                 readDBPGStatements,
+			backupDDLStatements:               backupDBPGStatements,
+			testTableDDLStatements:            readDBPGStatements,
+			testTableBitReversedSeqStatements: bitRevrseSeqDBPGStatments,
 		},
 	}
 
@@ -4330,6 +4358,79 @@ func TestIntegration_GFE_Latency(t *testing.T) {
 	DisableGfeLatencyAndHeaderMissingCountViews()
 }
 
+func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
+	skipEmulatorTest(t)
+	skipUnsupportedPGTest(t)
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	// create table with bit reverse seq options
+	client, _, cleanup := prepareIntegrationTest(ctx, t, DefaultSessionPoolConfig, statements[testDialect][testTableBitReversedSeqStatements])
+	defer cleanup()
+
+	var tests = []struct {
+		name     string
+		test     func() error
+		validate func()
+		wantErr  error
+	}{
+		{
+			name: "success: inserted rows should have auto generated keys",
+			test: func() error {
+				var (
+					values [][]interface{}
+					err    error
+				)
+				_, err = client.ReadWriteTransaction(ctx, func(ctx context.Context, tx *ReadWriteTransaction) error {
+					iter := tx.Query(ctx, NewStatement("INSERT INTO T (value) VALUES (100), (200), (300) THEN RETURN id, counter"))
+					values, err = readAllBitReversedSeqTable(iter, true)
+					return err
+				})
+				if len(values) != 3 {
+					return errors.New("expected 3 rows to be inserted")
+				}
+				counter := int64(0)
+				for i := 0; i < 3; i++ {
+					newId, newCounter := values[0][0].(int64), values[0][1].(int64)
+					if newId <= 0 {
+						return errors.New("expected id1, id2, id3 > 0")
+
+					}
+					if newCounter < counter {
+						return errors.New("expected c3 >= c2 >= c1")
+					}
+					counter = newCounter
+				}
+				iter := client.Single().Query(ctx, NewStatement("SELECT GET_INTERNAL_SEQUENCE_STATE('seqT')"))
+				r, err := iter.Next()
+				if err != nil {
+					return err
+				}
+				var c3 int64
+				err = r.Columns(&c3)
+				if err != nil {
+					return err
+				}
+				if c3 > counter {
+					return errors.New("expected c3 <= SELECT GET_INTERNAL_SEQUENCE_STATE('seqT')")
+				}
+				return err
+			},
+			validate: func() {},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotErr := tt.test()
+			if gotErr != nil && strings.ToLower(gotErr.Error()) != strings.ToLower(tt.wantErr.Error()) {
+				t.Errorf("BIT REVERSED SEQUENECES error=%v, wantErr: %v", gotErr, tt.wantErr)
+			} else {
+				tt.validate()
+			}
+		})
+	}
+}
+
 // Prepare initializes Cloud Spanner testing DB and clients.
 func prepareIntegrationTest(ctx context.Context, t *testing.T, spc SessionPoolConfig, statements []string) (*Client, string, func()) {
 	return prepareDBAndClient(ctx, t, spc, statements, testDialect)
@@ -4671,6 +4772,34 @@ func readAllAccountsTable(iter *RowIterator) ([][]interface{}, error) {
 			return nil, err
 		}
 		vals = append(vals, []interface{}{id, nickname, balance})
+	}
+}
+
+func readAllBitReversedSeqTable(iter *RowIterator, onlyIdCounter bool) ([][]interface{}, error) {
+	defer iter.Stop()
+	var vals [][]interface{}
+	for {
+		row, err := iter.Next()
+		if err == iterator.Done {
+			return vals, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		var id, value, counter, brId int64
+		if onlyIdCounter {
+			err = row.Columns(&id, &counter)
+			if err != nil {
+				return nil, err
+			}
+			vals = append(vals, []interface{}{id, counter})
+			continue
+		}
+		err = row.Columns(&id, &value, &counter, &brId)
+		if err != nil {
+			return nil, err
+		}
+		vals = append(vals, []interface{}{id, value, counter, brId})
 	}
 }
 
