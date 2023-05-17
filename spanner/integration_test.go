@@ -4391,8 +4391,8 @@ func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 				}
 				counter := int64(0)
 				for i := 0; i < 3; i++ {
-					newId, newCounter := values[i][0].(int64), values[i][1].(int64)
-					if newId <= 0 {
+					newID, newCounter := values[i][0].(int64), values[i][1].(int64)
+					if newID <= 0 {
 						return errors.New("expected id1, id2, id3 > 0")
 
 					}
@@ -4454,8 +4454,8 @@ func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 				}
 				counter := int64(0)
 				for i := 0; i < 100; i++ {
-					newId, newCounter := values[i][0].(int64), values[i][1].(int64)
-					if newId <= 0 || newId < 4611686018427387904 {
+					newID, newCounter := values[i][0].(int64), values[i][1].(int64)
+					if newID <= 0 || newID < 4611686018427387904 {
 						return errors.New("expected d1, id2, id3, …., id100 > 4611686018427387904")
 
 					}
@@ -4494,8 +4494,8 @@ func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 				}
 				counter := int64(0)
 				for i := 0; i < 3; i++ {
-					newId, newBrID, newCounter := values[i][0].(int64), values[i][1].(int64), values[i][2].(int64)
-					if newId <= 0 {
+					newID, newBrID, newCounter := values[i][0].(int64), values[i][1].(int64), values[i][2].(int64)
+					if newID <= 0 {
 						return errors.New("expected id > 0")
 					}
 					if newBrID < 10001 {
@@ -4902,7 +4902,7 @@ func readAllAccountsTable(iter *RowIterator) ([][]interface{}, error) {
 	}
 }
 
-func readAllBitReversedSeqTable(iter *RowIterator, onlyIdCounter bool) ([][]interface{}, error) {
+func readAllBitReversedSeqTable(iter *RowIterator, onlyIDCounter bool) ([][]interface{}, error) {
 	defer iter.Stop()
 	var vals [][]interface{}
 	for {
@@ -4913,8 +4913,8 @@ func readAllBitReversedSeqTable(iter *RowIterator, onlyIdCounter bool) ([][]inte
 		if err != nil {
 			return nil, err
 		}
-		var id, brId, counter int64
-		if onlyIdCounter {
+		var id, brID, counter int64
+		if onlyIDCounter {
 			err = row.Columns(&id, &counter)
 			if err != nil {
 				return nil, err
@@ -4922,11 +4922,11 @@ func readAllBitReversedSeqTable(iter *RowIterator, onlyIdCounter bool) ([][]inte
 			vals = append(vals, []interface{}{id, counter})
 			continue
 		}
-		err = row.Columns(&id, &brId, &counter)
+		err = row.Columns(&id, &brID, &counter)
 		if err != nil {
 			return nil, err
 		}
-		vals = append(vals, []interface{}{id, brId, counter})
+		vals = append(vals, []interface{}{id, brID, counter})
 	}
 }
 
