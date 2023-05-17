@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -234,7 +235,7 @@ var (
 						NumericArray	ARRAY<NUMERIC>
 					) PRIMARY KEY (RowID)`,
 	}
-	bitRevrseSeqDBStatments = []string{
+	bitReverseSeqDBStatments = []string{
 		`CREATE SEQUENCE seqT OPTIONS (sequence_kind = "bit_reversed_positive")`,
 		`CREATE TABLE T (
             id INT64 DEFAULT (GET_NEXT_SEQUENCE_VALUE('seqT')),
@@ -272,17 +273,18 @@ var (
 					)`,
 	}
 
-	bitRevrseSeqDBPGStatments = []string{
-		`CREATE SEQUENCE Seq BIT_REVERSED_POSITIVE`,
-		//`CREATE TABLE T (
-		//    id BIGINT DEFAULT nextval('Seq') PRIMARY KEY,
-		//    value BIGINT,
-		//    counter BIGINT DEFAULT pg_sequence_last_value('Seq'),
-		//    br_id BIGINT AS (BIT_REVERSE(id, true)) STORED,
-		//    CONSTRAINT id_gt_0 CHECK (id > 0),
-		//    CONSTRAINT counter_gt_br_id CHECK (counter >= br_id),
-		//    CONSTRAINT br_id_true CHECK (id = BIT_REVERSE(br_id, true)),
-		//  )`,
+	bitReverseSeqDBPGStatments = []string{
+		`CREATE SEQUENCE seqT BIT_REVERSED_POSITIVE`,
+		`CREATE TABLE T (
+		  id BIGINT DEFAULT nextval("seqT"),
+		  value BIGINT,
+		  counter BIGINT DEFAULT spanner.get_internal_sequence_state("seqT"),
+		  br_id bigint GENERATED ALWAYS AS (spanner.bit_reverse(id, true)) STORED,
+		  CHECK (id > 0),
+		  CHECK (counter >= br_id),
+          CHECK (id = spanner.bit_reverse(br_id, true)),
+		  PRIMARY KEY (id)
+		)`,
 	}
 
 	statements = map[adminpb.DatabaseDialect]map[string][]string{
@@ -292,7 +294,7 @@ var (
 			readDDLStatements:                 readDBStatements,
 			backupDDLStatements:               backupDBStatements,
 			testTableDDLStatements:            readDBStatements,
-			testTableBitReversedSeqStatements: bitRevrseSeqDBStatments,
+			testTableBitReversedSeqStatements: bitReverseSeqDBStatments,
 		},
 		adminpb.DatabaseDialect_POSTGRESQL: {
 			singerDDLStatements:               singerDBPGStatements,
@@ -300,7 +302,7 @@ var (
 			readDDLStatements:                 readDBPGStatements,
 			backupDDLStatements:               backupDBPGStatements,
 			testTableDDLStatements:            readDBPGStatements,
-			testTableBitReversedSeqStatements: bitRevrseSeqDBPGStatments,
+			testTableBitReversedSeqStatements: bitReverseSeqDBPGStatments,
 		},
 	}
 
@@ -4360,19 +4362,17 @@ func TestIntegration_GFE_Latency(t *testing.T) {
 
 func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 	skipEmulatorTest(t)
-	skipUnsupportedPGTest(t)
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	// create table with bit reverse seq options
-	client, _, cleanup := prepareIntegrationTest(ctx, t, DefaultSessionPoolConfig, statements[testDialect][testTableBitReversedSeqStatements])
+	client, dbPath, cleanup := prepareIntegrationTest(ctx, t, DefaultSessionPoolConfig, statements[testDialect][testTableBitReversedSeqStatements])
 	defer cleanup()
 
 	var tests = []struct {
-		name     string
-		test     func() error
-		validate func()
-		wantErr  error
+		name    string
+		test    func() error
+		wantErr error
 	}{
 		{
 			name: "success: inserted rows should have auto generated keys",
@@ -4391,7 +4391,7 @@ func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 				}
 				counter := int64(0)
 				for i := 0; i < 3; i++ {
-					newId, newCounter := values[0][0].(int64), values[0][1].(int64)
+					newId, newCounter := values[i][0].(int64), values[i][1].(int64)
 					if newId <= 0 {
 						return errors.New("expected id1, id2, id3 > 0")
 
@@ -4416,7 +4416,136 @@ func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 				}
 				return err
 			},
-			validate: func() {},
+		},
+		{
+			name: "success: reduce ranges to half",
+			test: func() error {
+				op, err := databaseAdmin.UpdateDatabaseDdl(ctx, &adminpb.UpdateDatabaseDdlRequest{
+					Database: dbPath,
+					Statements: []string{`ALTER SEQUENCE seqT SET OPTIONS (
+						skip_range_min = 0,
+						skip_range_max = 4611686018427387904
+					)`},
+				})
+				if err != nil {
+					t.Fatalf("cannot modify sequence %v: %v", dbPath, err)
+				}
+				if err := op.Wait(ctx); err != nil {
+					t.Fatalf("timeout modifying sequence %v: %v", dbPath, err)
+				}
+				var values [][]interface{}
+				_, err = client.ReadWriteTransaction(ctx, func(ctx context.Context, tx *ReadWriteTransaction) error {
+					var v string
+					for i := 1; i <= 100; i++ {
+						v = v + " (" + strconv.Itoa(i) + ")"
+						if i != 100 {
+							v = v + ", "
+						}
+					}
+					iter := tx.Query(ctx, NewStatement("INSERT INTO T (value) VALUES "+v+" THEN RETURN id, counter"))
+					values, err = readAllBitReversedSeqTable(iter, true)
+					return err
+				})
+				if err != nil {
+					return err
+				}
+				if len(values) != 100 {
+					return errors.New("expected 100 rows to be inserted")
+				}
+				counter := int64(0)
+				for i := 0; i < 100; i++ {
+					newId, newCounter := values[i][0].(int64), values[i][1].(int64)
+					if newId <= 0 || newId < 4611686018427387904 {
+						return errors.New("expected d1, id2, id3, …., id100 > 4611686018427387904")
+
+					}
+					if newCounter < counter {
+						return errors.New("expected c3 >= c2 >= c1")
+					}
+					counter = newCounter
+				}
+				return err
+			},
+		},
+		{
+			name: "success: move start with counter forward",
+			test: func() error {
+				op, err := databaseAdmin.UpdateDatabaseDdl(ctx, &adminpb.UpdateDatabaseDdlRequest{
+					Database:   dbPath,
+					Statements: []string{`ALTER SEQUENCE seqT SET OPTIONS (start_with_counter=10001)`},
+				})
+				if err != nil {
+					t.Fatalf("cannot modify sequence %v: %v", dbPath, err)
+				}
+				if err := op.Wait(ctx); err != nil {
+					t.Fatalf("timeout modifying sequence %v: %v", dbPath, err)
+				}
+				var values [][]interface{}
+				_, err = client.ReadWriteTransaction(ctx, func(ctx context.Context, tx *ReadWriteTransaction) error {
+					iter := tx.Query(ctx, NewStatement("INSERT INTO T (value) VALUES (4), (5), (6) THEN RETURN id, br_id, counter"))
+					values, err = readAllBitReversedSeqTable(iter, false)
+					return err
+				})
+				if err != nil {
+					return err
+				}
+				if len(values) != 3 {
+					return errors.New("expected 3 rows to be inserted")
+				}
+				counter := int64(0)
+				for i := 0; i < 3; i++ {
+					newId, newBrID, newCounter := values[i][0].(int64), values[i][1].(int64), values[i][2].(int64)
+					if newId <= 0 {
+						return errors.New("expected id > 0")
+					}
+					if newBrID < 10001 {
+						return errors.New("expected br_idi >= 10001")
+					}
+					if newCounter < 10001 {
+						return errors.New("expected ci >= 10001")
+					}
+					if counter < newCounter {
+						counter = newCounter
+					}
+				}
+				iter := client.Single().Query(ctx, NewStatement("SELECT GET_INTERNAL_SEQUENCE_STATE('seqT')"))
+				r, err := iter.Next()
+				if err != nil {
+					return err
+				}
+				var c3 int64
+				err = r.Columns(&c3)
+				if err != nil {
+					return err
+				}
+				if c3 > counter {
+					return errors.New("expected max(ci) <= SELECT GET_INTERNAL_SEQUENCE_STATE('seqT')")
+				}
+				return err
+			},
+		},
+		{
+			name: "success: drop the sequences",
+			test: func() error {
+				op, err := databaseAdmin.UpdateDatabaseDdl(ctx, &adminpb.UpdateDatabaseDdlRequest{
+					Database: dbPath,
+					Statements: []string{
+						"ALTER TABLE T ALTER COLUMN id DROP DEFAULT",
+						"ALTER TABLE T ALTER COLUMN counter DROP DEFAULT",
+						"ALTER TABLE T DROP CONSTRAINT id_gt_0",
+						"ALTER TABLE T DROP CONSTRAINT counter_gt_br_id",
+						"ALTER TABLE T DROP CONSTRAINT br_id_true",
+						"DROP SEQUENCE seqT",
+					},
+				})
+				if err != nil {
+					t.Fatalf("cannot delete sequences %v: %v", dbPath, err)
+				}
+				if err := op.Wait(ctx); err != nil {
+					t.Fatalf("timeout deleting sequence %v: %v", dbPath, err)
+				}
+				return nil
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -4424,8 +4553,6 @@ func TestIntegration_Bit_Reversed_Sequence(t *testing.T) {
 			gotErr := tt.test()
 			if gotErr != nil && strings.ToLower(gotErr.Error()) != strings.ToLower(tt.wantErr.Error()) {
 				t.Errorf("BIT REVERSED SEQUENECES error=%v, wantErr: %v", gotErr, tt.wantErr)
-			} else {
-				tt.validate()
 			}
 		})
 	}
@@ -4786,7 +4913,7 @@ func readAllBitReversedSeqTable(iter *RowIterator, onlyIdCounter bool) ([][]inte
 		if err != nil {
 			return nil, err
 		}
-		var id, value, counter, brId int64
+		var id, brId, counter int64
 		if onlyIdCounter {
 			err = row.Columns(&id, &counter)
 			if err != nil {
@@ -4795,11 +4922,11 @@ func readAllBitReversedSeqTable(iter *RowIterator, onlyIdCounter bool) ([][]inte
 			vals = append(vals, []interface{}{id, counter})
 			continue
 		}
-		err = row.Columns(&id, &value, &counter, &brId)
+		err = row.Columns(&id, &brId, &counter)
 		if err != nil {
 			return nil, err
 		}
-		vals = append(vals, []interface{}{id, value, counter, brId})
+		vals = append(vals, []interface{}{id, brId, counter})
 	}
 }
 
