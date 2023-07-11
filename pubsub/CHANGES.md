@@ -1,5 +1,12 @@
 # Changes
 
+## [1.32.1](https://github.com/googleapis/google-cloud-go/compare/pubsub/v1.32.0...pubsub/v1.32.1) (2023-07-11)
+
+
+### Bug Fixes
+
+* **pubsub/pstest:** Update maxMessageRetentionDuration to be 31 days ([#8199](https://github.com/googleapis/google-cloud-go/issues/8199)) ([1fa4bb8](https://github.com/googleapis/google-cloud-go/commit/1fa4bb8b3f22aad0b97ccae610408720522a8b31))
+
 ## [1.32.0](https://github.com/googleapis/google-cloud-go/compare/pubsub/v1.31.0...pubsub/v1.32.0) (2023-06-27)
 
 
