@@ -1,6 +1,14 @@
 # Changes
 
 
+## [1.31.1](https://github.com/googleapis/google-cloud-go/compare/storage/v1.31.0...storage/v1.31.1) (2023-07-11)
+
+
+### Bug Fixes
+
+* **storage:** Fix AllObjects condition in gRPC ([#8184](https://github.com/googleapis/google-cloud-go/issues/8184)) ([2b99e4f](https://github.com/googleapis/google-cloud-go/commit/2b99e4f39be20fe21e8bc5c1ec1c0e758222c46e)), refs [#6205](https://github.com/googleapis/google-cloud-go/issues/6205)
+* **storage:** Update gRPC retry codes ([#8202](https://github.com/googleapis/google-cloud-go/issues/8202)) ([afdf772](https://github.com/googleapis/google-cloud-go/commit/afdf772fc6a90b3010eee9d70ab65e22e276f53f))
+
 ## [1.31.0](https://github.com/googleapis/google-cloud-go/compare/storage/v1.30.1...storage/v1.31.0) (2023-06-27)
 
 
