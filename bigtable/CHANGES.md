@@ -1,5 +1,12 @@
 # Changes
 
+## [1.20.0](https://github.com/googleapis/google-cloud-go/compare/bigtable/v1.19.0...bigtable/v1.20.0) (2023-07-11)
+
+
+### Features
+
+* **bigtable/bttest:** Support reverse scans ([#8198](https://github.com/googleapis/google-cloud-go/issues/8198)) ([b8f164f](https://github.com/googleapis/google-cloud-go/commit/b8f164fcdf2be3a6fcf7918b3703e224801cc513))
+
 ## [1.19.0](https://github.com/googleapis/google-cloud-go/compare/bigtable/v1.18.1...bigtable/v1.19.0) (2023-07-06)
 
 
