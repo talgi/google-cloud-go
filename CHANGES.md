@@ -1,5 +1,16 @@
 # Changes
 
+## [1.0.0](https://github.com/googleapis/google-cloud-go/compare/v0.110.5...v1.0.0) (2023-07-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **gaming:** Removes api: gameservices the Game Servers API.
+
+### Miscellaneous Chores
+
+* **gaming:** Removes all Gaming API files as part of  Google Cloud Game Servers Deprecation ([#8238](https://github.com/googleapis/google-cloud-go/issues/8238)) ([b56470e](https://github.com/googleapis/google-cloud-go/commit/b56470ec3499bc38f118b038418058861868a4ef))
+
 ## [0.110.5](https://github.com/googleapis/google-cloud-go/compare/v0.110.4...v0.110.5) (2023-07-07)
 
 
